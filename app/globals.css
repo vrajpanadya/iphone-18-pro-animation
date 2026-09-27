@@ -13,8 +13,15 @@
   --color-foreground: var(--foreground);
   --color-accent: var(--accent);
   --color-accent-light: var(--accent-light);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Self-hosted system font stack — mirrors Apple's own SF Pro fallback
+     chain. Deliberately NOT loaded via next/font/google: that pulls from
+     fonts.googleapis.com at build time, which fails outright in sandboxed /
+     offline / proxied environments and adds an avoidable network dependency
+     for a marketing page that should always render instantly. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Code", "Source Code Pro",
+    Menlo, Consolas, monospace;
 }
 
 /* ── Base ────────────────────────────────────────────── */
@@ -29,7 +36,7 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Do NOT set overflow-x: hidden on body. Setting only overflow-x forces the
@@ -141,4 +148,25 @@ canvas {
 ::selection {
   background: rgba(139, 34, 82, 0.4);
   color: white;
+}
+
+/* ── Reduced Motion ──────────────────────────────────── */
+/* Respect the user's OS-level motion preference: keep the scroll-driven
+   frame sequence itself (it's the core content, and instant-jump scrubbing
+   is not motion sickness territory) but stop purely decorative looping
+   animations and long transitions from running. */
+
+@media (prefers-reduced-motion: reduce) {
+  .loader-spinner,
+  .loader-text,
+  .animate-fade-in-up {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.001ms !important;
+  }
 }

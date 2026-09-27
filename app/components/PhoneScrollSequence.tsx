@@ -123,6 +123,9 @@ function useCanvasRenderer(
       const ctx = canvas.getContext("2d", { alpha: false });
       if (!ctx) return;
 
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+
       const img = images[index];
       const dpr = window.devicePixelRatio || 1;
 
@@ -183,7 +186,7 @@ function LoadingScreen({ progress }: { progress: number }) {
 
       <div className="relative flex flex-col items-center gap-8">
         {/* Spinner */}
-        <div className="loader-spinner" />
+        <div className="loader-spinner" role="status" aria-live="polite" aria-label={`Loading, ${progress}% complete`} />
 
         {/* Progress */}
         <div className="flex flex-col items-center gap-3">
@@ -375,12 +378,15 @@ export default function PhoneScrollSequence() {
             {/* Canvas */}
             <canvas
               ref={canvasRef}
+              role="img"
+              aria-label="iPhone 18 Pro rotating in titanium, animated as you scroll"
               className="absolute inset-0 h-full w-full"
               style={{ background: "#0a0a0a" }}
             />
 
             {/* Vignette overlay for cinematic feel */}
             <div
+              aria-hidden="true"
               className="absolute inset-0 pointer-events-none z-[5]"
               style={{
                 background:
