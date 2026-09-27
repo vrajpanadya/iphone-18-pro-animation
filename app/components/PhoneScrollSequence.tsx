@@ -131,8 +131,23 @@ function useCanvasRenderer(
 
       // Resize canvas to fill viewport at native resolution
       const rect = canvas.getBoundingClientRect();
-      const canvasW = rect.width * dpr;
-      const canvasH = rect.height * dpr;
+
+      // Guard against a degenerate measurement — e.g. the first paint
+      // inside an embedding iframe (Arena's live preview) that hasn't
+      // finished settling its own size yet, or a momentary 0×0 during a
+      // layout transition. Committing a near-zero size to canvas.width /
+      // canvas.height here would bake in a broken backing store: later,
+      // once the box grows to its real size, the browser stretches that
+      // tiny buffer across the full area, which reads as a mostly-blank
+      // canvas with just a sliver of stretched image content — exactly
+      // the kind of "half background missing" glitch this guards against.
+      // A ResizeObserver-driven re-render (see below) will retry once the
+      // real size is available.
+      if (rect.width < 2 || rect.height < 2) return;
+
+      const canvasW = Math.round(rect.width * dpr);
+      const canvasH = Math.round(rect.height * dpr);
+
 
       if (canvas.width !== canvasW || canvas.height !== canvasH) {
         canvas.width = canvasW;
@@ -289,6 +304,7 @@ export default function PhoneScrollSequence() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [currentProgress, setCurrentProgress] = useState(0);
   const lastFrameRef = useRef(-1);
+  const rafRef = useRef(0);
 
   const { images, progress, isLoaded } = useImagePreloader();
   const { renderFrame } = useCanvasRenderer(canvasRef, images);
@@ -326,18 +342,40 @@ export default function PhoneScrollSequence() {
     }
   });
 
-  // Initial render when images are loaded
+  // Initial render when images are loaded. Deferred two animation frames so
+  // the very first canvas measurement happens after the browser has fully
+  // settled layout (mobile browsers can still be animating their address
+  // bar / dynamic toolbar in or out right after load, which changes the
+  // visual viewport size without firing a "resize" event — measuring too
+  // early bakes in a stale, undersized canvas backing store).
   useEffect(() => {
     if (isLoaded && images.length > 0) {
-      renderFrame(0);
+      const raf1 = requestAnimationFrame(() => {
+        const raf2 = requestAnimationFrame(() => renderFrame(0));
+        rafRef.current = raf2;
+      });
+      rafRef.current = raf1;
+      return () => cancelAnimationFrame(rafRef.current);
     }
   }, [isLoaded, images, renderFrame]);
 
-  // Re-render current frame on resize
+  // Re-render current frame whenever the canvas's actual box size changes,
+  // for ANY reason — window resize, orientation change, mobile
+  // address-bar show/hide, dynamic viewport unit shifts, zoom, etc.
+  //
+  // A plain `window.addEventListener("resize", ...)` (the previous
+  // approach) misses most of those on mobile Safari/Chrome, since they
+  // resize the *visual* viewport without firing a window resize event.
+  // Left stale, the canvas's internal pixel buffer (canvas.width/height)
+  // stops matching its CSS display box; since the context is created with
+  // `alpha: false`, any part of the buffer our draw calls don't reach
+  // renders as solid black — which is exactly what produces a broken
+  // half-filled-looking background. ResizeObserver watches the element's
+  // actual box directly and fires reliably for all of the above.
   useEffect(() => {
     if (!isLoaded) return;
 
-    const handleResize = () => {
+    const rerenderCurrentFrame = () => {
       const index = Math.min(
         TOTAL_FRAMES - 1,
         Math.max(0, Math.round(frameIndex.get()))
@@ -345,8 +383,28 @@ export default function PhoneScrollSequence() {
       renderFrame(index);
     };
 
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    const canvas = canvasRef.current;
+    let resizeObserver: ResizeObserver | undefined;
+    if (canvas && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(rerenderCurrentFrame);
+      resizeObserver.observe(canvas);
+    }
+
+    // Belt-and-suspenders: also listen for the events ResizeObserver can't
+    // cover (e.g. pinch-zoom on iOS only updates visualViewport).
+    window.addEventListener("resize", rerenderCurrentFrame);
+    window.addEventListener("orientationchange", rerenderCurrentFrame);
+    window.visualViewport?.addEventListener("resize", rerenderCurrentFrame);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", rerenderCurrentFrame);
+      window.removeEventListener("orientationchange", rerenderCurrentFrame);
+      window.visualViewport?.removeEventListener(
+        "resize",
+        rerenderCurrentFrame
+      );
+    };
   }, [isLoaded, frameIndex, renderFrame]);
 
   // Lock scroll while loading, unlock when ready
